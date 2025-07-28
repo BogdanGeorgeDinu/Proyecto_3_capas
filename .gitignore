@@ -1,0 +1,21 @@
+# Archivo de variables locales con secretos. ¡NUNCA SUBIR! (TIENES EL TFVARS.EJEMPLO)
+terraform.tfvars
+*.tfvars.json
+
+# Archivos de estado de Terraform. Pueden contener información sensible.
+*.tfstate
+*.tfstate.backup
+
+# Directorio local de Terraform con los plugins y módulos.
+.terraform/
+
+# Archivos de logs y overrides.
+crash.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# Archivos de configuración del CLI de Terraform
+.terraformrc
+terraform.rc
