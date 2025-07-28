@@ -1,9 +1,6 @@
-
-
 provider "aws" {
   region = var.region
 }
-
 
 resource "aws_vpc" "main" {
   cidr_block = var.vpc_cidr
@@ -13,20 +10,23 @@ resource "aws_vpc" "main" {
 }
 
 resource "aws_subnet" "public" {
-  vpc_id            = aws_vpc.main.id
-  cidr_block        = var.public_subnet_cidr
-  availability_zone = "${var.region}a"
+  count                   = length(var.availability_zones)
+  vpc_id                  = aws_vpc.main.id
+  cidr_block              = element(var.public_subnet_cidrs, count.index)
+  availability_zone       = element(var.availability_zones, count.index)
+  map_public_ip_on_launch = true
   tags = {
-    Name = "${var.proyecto_bogdan}-PublicSubnet"
+    Name = "${var.proyecto_bogdan}-PublicSubnet-${element(var.availability_zones, count.index)}"
   }
 }
 
 resource "aws_subnet" "private" {
+  count             = length(var.availability_zones)
   vpc_id            = aws_vpc.main.id
-  cidr_block        = var.private_subnet_cidr
-  availability_zone = "${var.region}a"
+  cidr_block        = element(var.private_subnet_cidrs, count.index)
+  availability_zone = element(var.availability_zones, count.index)
   tags = {
-    Name = "${var.proyecto_bogdan}-PrivateSubnet"
+    Name = "${var.proyecto_bogdan}-PrivateSubnet-${element(var.availability_zones, count.index)}"
   }
 }
 
@@ -38,17 +38,19 @@ resource "aws_internet_gateway" "main" {
 }
 
 resource "aws_eip" "nat" {
+  count  = length(var.availability_zones)
   domain = "vpc"
   tags = {
-    Name = "${var.proyecto_bogdan}-EIP"
+    Name = "${var.proyecto_bogdan}-EIP-NAT-${element(var.availability_zones, count.index)}"
   }
 }
 
 resource "aws_nat_gateway" "main" {
-  allocation_id = aws_eip.nat.id
-  subnet_id     = aws_subnet.public.id
+  count         = length(var.availability_zones)
+  allocation_id = aws_eip.nat[count.index].id
+  subnet_id     = aws_subnet.public[count.index].id
   tags = {
-    Name = "${var.proyecto_bogdan}-NAT-GW"
+    Name = "${var.proyecto_bogdan}-NAT-GW-${element(var.availability_zones, count.index)}"
   }
   depends_on = [aws_internet_gateway.main]
 }
@@ -65,26 +67,28 @@ resource "aws_route_table" "public" {
 }
 
 resource "aws_route_table_association" "public" {
-  subnet_id      = aws_subnet.public.id
+  count          = length(var.availability_zones)
+  subnet_id      = aws_subnet.public[count.index].id
   route_table_id = aws_route_table.public.id
 }
 
 resource "aws_route_table" "private" {
+  count  = length(var.availability_zones)
   vpc_id = aws_vpc.main.id
   route {
     cidr_block     = "0.0.0.0/0"
-    nat_gateway_id = aws_nat_gateway.main.id
+    nat_gateway_id = aws_nat_gateway.main[count.index].id
   }
   tags = {
-    Name = "${var.proyecto_bogdan}-PrivateRouteTable"
+    Name = "${var.proyecto_bogdan}-PrivateRouteTable-${element(var.availability_zones, count.index)}"
   }
 }
 
 resource "aws_route_table_association" "private" {
-  subnet_id      = aws_subnet.private.id
-  route_table_id = aws_route_table.private.id
+  count          = length(var.availability_zones)
+  subnet_id      = aws_subnet.private[count.index].id
+  route_table_id = aws_route_table.private[count.index].id
 }
-
 
 resource "aws_security_group" "alb" {
   name        = "${var.proyecto_bogdan}-alb-sg"
@@ -140,14 +144,12 @@ resource "aws_security_group" "database" {
   }
 }
 
-
-
 resource "aws_lb" "main" {
   name               = "${var.proyecto_bogdan}-alb"
   internal           = false
   load_balancer_type = "application"
   security_groups    = [aws_security_group.alb.id]
-  subnets            = [aws_subnet.public.id]
+  subnets            = aws_subnet.public.*.id
 }
 
 resource "aws_lb_target_group" "main" {
@@ -202,23 +204,23 @@ resource "aws_launch_template" "main" {
   name_prefix   = "${var.proyecto_bogdan}-lt-"
   image_id      = "ami-01e4449c34d3da9a5"
   instance_type = "t2.micro"
-  
+
   iam_instance_profile {
     name = aws_iam_instance_profile.ec2_profile.name
   }
 
   vpc_security_group_ids = [aws_security_group.webserver.id]
-  
+
   user_data = base64encode(<<-EOF
               #!/bin/bash
               yum update -y
               yum install -y httpd
               systemctl start httpd
               systemctl enable httpd
-              echo "<h1>Desplegado con Terraform! IP: $(hostname -f)</h1>" > /var/www/html/index.html
+              echo "<h1>Desplegado en Multi-AZ con Terraform! IP: $(hostname -f)</h1>" > /var/www/html/index.html
               EOF
   )
-  
+
   tags = {
     Name = "${var.proyecto_bogdan}-WebServer"
   }
@@ -227,23 +229,21 @@ resource "aws_launch_template" "main" {
 resource "aws_autoscaling_group" "main" {
   name                = "${var.proyecto_bogdan}-asg"
   min_size            = 2
-  max_size            = 2
+  max_size            = 4
   desired_capacity    = 2
-  vpc_zone_identifier = [aws_subnet.private.id]
-  
+  vpc_zone_identifier = aws_subnet.private.*.id
+
   launch_template {
     id      = aws_launch_template.main.id
     version = "$Latest"
   }
-  
+
   target_group_arns = [aws_lb_target_group.main.arn]
 }
 
-# --- 5. CAPA DE DATOS (RDS) ---
-
 resource "aws_db_subnet_group" "main" {
   name       = "${var.proyecto_bogdan}-db-subnet-group"
-  subnet_ids = [aws_subnet.private.id]
+  subnet_ids = aws_subnet.private.*.id
   tags = {
     Name = "${var.proyecto_bogdan}-DBSG"
   }
@@ -261,4 +261,5 @@ resource "aws_db_instance" "main" {
   vpc_security_group_ids = [aws_security_group.database.id]
   skip_final_snapshot    = true
   publicly_accessible    = false
+  multi_az               = true
 }
