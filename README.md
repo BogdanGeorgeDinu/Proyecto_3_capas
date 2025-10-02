@@ -21,7 +21,7 @@ Diagrama de la Arquitectura
 
 Así es como se ve la arquitectura que despliega el código. El diagrama lo hice con draw.io.
 El diagrama la encontraras en la carpeta de recursos.
-
+![Diagrama de arquitectura](./Recursos/1st.drawio.pdf)
 ---
 
 Tecnología / Servicio - Nube Amazon Web Services
